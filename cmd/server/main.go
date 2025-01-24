@@ -8,6 +8,9 @@ import (
 	"mygo/internal/presentation/httpapi"
 	"mygo/pkg/logger"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 )
 
 var (
@@ -15,10 +18,28 @@ var (
 )
 
 func main() {
-	_, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_ = httpapi.NewServer(opt)
+	server := httpapi.NewServer(opt)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case s := <-sig:
+		logger.Debug(ctx, "receive signal", "signal", s)
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		if err := server.Close(wg); err != nil {
+			logger.Error(ctx, "shutdown server", "error", err)
+		} else {
+			logger.Info(ctx, "shutdown server")
+		}
+
+		wg.Wait()
+		os.Exit(0)
+	}
 }
 
 func init() {
@@ -31,6 +52,10 @@ func init() {
 
 	if opt.ConfigFile == "" {
 		logAndExist("config file required")
+	} else if err := opt.LoadFile(opt.ConfigFile); err != nil {
+		logAndExist("load config file", "error", err)
+	} else if err := opt.Prepare(); err != nil {
+		logAndExist("prepare resources", "error", err)
 	}
 }
 
